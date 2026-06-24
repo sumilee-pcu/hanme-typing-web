@@ -434,8 +434,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
   Duration _elapsed = Duration.zero;
   int _index = 0;
   int _completedChars = 0;
+  int _completedStrokes = 0;
+  int _mistakeCount = 0;
   int _score = 0;
   bool _finished = false;
+  String _lastCommittedInput = '';
 
   @override
   void initState() {
@@ -487,17 +490,21 @@ class _PracticeScreenState extends State<PracticeScreen> {
       return;
     }
     _ensureStarted();
+    _recordNewMistakes();
     final input = _controller.text;
-    if (input == _target) {
+    if (input == _target && !_hasActiveComposition) {
       _completedChars += _target.length;
+      _completedStrokes += _typingStrokeCount(_target);
       _score += _scoreForCurrentTarget();
       if (widget.mode == PracticeMode.passage ||
           _index == _targets.length - 1) {
+        _clearInputSilently();
         _finish();
       } else {
         setState(() {
           _index += 1;
-          _controller.clear();
+          _lastCommittedInput = '';
+          _clearInputSilently();
         });
       }
     } else {
@@ -523,8 +530,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
     }
     _finished = true;
     _ticker?.cancel();
+    if (_startedAt != null) {
+      _elapsed = DateTime.now().difference(_startedAt!);
+    }
     final result = PracticeResult(
-      score: _score + _scoreForCurrentTarget(),
+      score: _score,
       cpm: _currentCpm,
       accuracy: _currentAccuracy,
       correct: _currentCorrect,
@@ -556,15 +566,36 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _elapsed = Duration.zero;
       _index = 0;
       _completedChars = 0;
+      _completedStrokes = 0;
+      _mistakeCount = 0;
       _score = 0;
       _finished = false;
+      _lastCommittedInput = '';
       _controller.clear();
     });
     _focusNode.requestFocus();
   }
 
+  void _recordNewMistakes() {
+    final input = _committedInput;
+    if (input.length > _lastCommittedInput.length) {
+      for (var i = _lastCommittedInput.length; i < input.length; i += 1) {
+        if (i >= _target.length || input[i] != _target[i]) {
+          _mistakeCount += 1;
+        }
+      }
+    }
+    _lastCommittedInput = input;
+  }
+
+  void _clearInputSilently() {
+    _controller.removeListener(_handleInput);
+    _controller.clear();
+    _controller.addListener(_handleInput);
+  }
+
   int get _currentCorrect {
-    final input = _controller.text;
+    final input = _committedInput;
     var correct = _completedChars;
     for (var i = 0; i < input.length && i < _target.length; i += 1) {
       if (input[i] == _target[i]) {
@@ -575,28 +606,53 @@ class _PracticeScreenState extends State<PracticeScreen> {
   }
 
   int get _currentMistakes {
-    final input = _controller.text;
-    var mistakes = 0;
-    for (var i = 0; i < input.length; i += 1) {
-      if (i >= _target.length || input[i] != _target[i]) {
-        mistakes += 1;
-      }
-    }
-    return mistakes;
+    return _mistakeCount;
   }
 
-  int get _typedChars => _completedChars + _controller.text.length;
+  int get _typedChars => _completedChars + _committedInput.length;
+
+  bool get _hasActiveComposition => _hasComposingText(_controller.value);
+
+  String get _committedInput {
+    final value = _controller.value;
+    if (!_hasComposingText(value)) {
+      return value.text;
+    }
+    final start = value.composing.start.clamp(0, value.text.length).toInt();
+    final end = value.composing.end.clamp(start, value.text.length).toInt();
+    return value.text.replaceRange(start, end, '');
+  }
 
   int get _currentAccuracy {
-    if (_typedChars == 0) {
+    final attempts = _currentCorrect + _currentMistakes;
+    if (attempts == 0) {
       return 100;
     }
-    return ((_currentCorrect / _typedChars) * 100).clamp(0, 100).round();
+    return ((_currentCorrect / attempts) * 100).clamp(0, 100).round();
   }
 
   int get _currentCpm {
-    final seconds = math.max(1, _elapsed.inSeconds);
-    return ((_currentCorrect / seconds) * 60).round();
+    final seconds = math.max(1, _effectiveElapsed.inSeconds);
+    return ((_currentCorrectStrokes / seconds) * 60).round();
+  }
+
+  int get _currentCorrectStrokes {
+    final input = _committedInput;
+    var strokes = _completedStrokes;
+    for (var i = 0; i < input.length && i < _target.length; i += 1) {
+      if (input[i] == _target[i]) {
+        strokes += _typingStrokeCount(input[i]);
+      }
+    }
+    return strokes;
+  }
+
+  Duration get _effectiveElapsed {
+    final startedAt = _startedAt;
+    if (startedAt == null || _finished) {
+      return _elapsed;
+    }
+    return DateTime.now().difference(startedAt);
   }
 
   double get _progress {
@@ -645,7 +701,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                         TargetPanel(
                           mode: widget.mode,
                           target: _target,
-                          input: _controller.text,
+                          editingValue: _controller.value,
                           roundText: widget.mode == PracticeMode.defense
                               ? '남은 시간 ${math.max(0, _limit.inSeconds - _elapsed.inSeconds)}초'
                               : '${_index + 1} / ${_targets.length}',
@@ -673,7 +729,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
                           onSkip: () {
                             setState(() {
                               _index = (_index + 1) % _targets.length;
-                              _controller.clear();
+                              _lastCommittedInput = '';
+                              _clearInputSilently();
                             });
                             _focusNode.requestFocus();
                           },
@@ -816,14 +873,14 @@ class TargetPanel extends StatelessWidget {
   const TargetPanel({
     required this.mode,
     required this.target,
-    required this.input,
+    required this.editingValue,
     required this.roundText,
     super.key,
   });
 
   final PracticeMode mode;
   final String target;
-  final String input;
+  final TextEditingValue editingValue;
   final String roundText;
 
   @override
@@ -849,7 +906,9 @@ class TargetPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           RichText(
-            text: TextSpan(children: _targetSpans(target, input, mode.accent)),
+            text: TextSpan(
+              children: _targetSpans(target, editingValue, mode.accent),
+            ),
           ),
         ],
       ),
@@ -857,14 +916,29 @@ class TargetPanel extends StatelessWidget {
   }
 }
 
-List<TextSpan> _targetSpans(String target, String input, Color accent) {
+List<TextSpan> _targetSpans(
+  String target,
+  TextEditingValue editingValue,
+  Color accent,
+) {
+  final input = editingValue.text;
+  final composingStart = _hasComposingText(editingValue)
+      ? editingValue.composing.start.clamp(0, input.length).toInt()
+      : -1;
+  final composingEnd = _hasComposingText(editingValue)
+      ? editingValue.composing.end.clamp(composingStart, input.length).toInt()
+      : -1;
   final spans = <TextSpan>[];
   for (var i = 0; i < target.length; i += 1) {
     final char = target[i];
     final typed = i < input.length ? input[i] : null;
+    final isComposing = i >= composingStart && i < composingEnd;
     Color color = AppColors.text;
     Color? background;
-    if (typed != null && typed == char) {
+    if (isComposing) {
+      color = accent;
+      background = accent.withValues(alpha: 0.12);
+    } else if (typed != null && typed == char) {
       color = Colors.white;
       background = AppColors.green;
     } else if (typed != null && typed != char) {
@@ -885,6 +959,88 @@ List<TextSpan> _targetSpans(String target, String input, Color accent) {
     );
   }
   return spans;
+}
+
+bool _hasComposingText(TextEditingValue value) {
+  return value.composing.isValid &&
+      !value.composing.isCollapsed &&
+      value.composing.start >= 0 &&
+      value.composing.end <= value.text.length;
+}
+
+int _typingStrokeCount(String text) {
+  var total = 0;
+  for (final codePoint in text.runes) {
+    total += _typingStrokeCountForCodePoint(codePoint);
+  }
+  return total;
+}
+
+int _typingStrokeCountForCodePoint(int codePoint) {
+  const hangulBase = 0xAC00;
+  const hangulEnd = 0xD7A3;
+  if (codePoint < hangulBase || codePoint > hangulEnd) {
+    return 1;
+  }
+
+  const vowelStrokes = [
+    1, // ㅏ
+    1, // ㅐ
+    1, // ㅑ
+    1, // ㅒ
+    1, // ㅓ
+    1, // ㅔ
+    1, // ㅕ
+    1, // ㅖ
+    1, // ㅗ
+    2, // ㅘ
+    2, // ㅙ
+    2, // ㅚ
+    1, // ㅛ
+    1, // ㅜ
+    2, // ㅝ
+    2, // ㅞ
+    2, // ㅟ
+    1, // ㅠ
+    1, // ㅡ
+    2, // ㅢ
+    1, // ㅣ
+  ];
+  const finalStrokes = [
+    0, // none
+    1, // ㄱ
+    1, // ㄲ
+    2, // ㄳ
+    1, // ㄴ
+    2, // ㄵ
+    2, // ㄶ
+    1, // ㄷ
+    1, // ㄹ
+    2, // ㄺ
+    2, // ㄻ
+    2, // ㄼ
+    2, // ㄽ
+    2, // ㄾ
+    2, // ㄿ
+    2, // ㅀ
+    1, // ㅁ
+    1, // ㅂ
+    2, // ㅄ
+    1, // ㅅ
+    1, // ㅆ
+    1, // ㅇ
+    1, // ㅈ
+    1, // ㅊ
+    1, // ㅋ
+    1, // ㅌ
+    1, // ㅍ
+    1, // ㅎ
+  ];
+
+  final syllableIndex = codePoint - hangulBase;
+  final vowelIndex = (syllableIndex % 588) ~/ 28;
+  final finalIndex = syllableIndex % 28;
+  return 1 + vowelStrokes[vowelIndex] + finalStrokes[finalIndex];
 }
 
 class InputDock extends StatelessWidget {
