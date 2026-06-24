@@ -42,7 +42,7 @@ void main() {
     expect(input.controller?.text, isEmpty);
   });
 
-  testWidgets('venice continues after a correct answer', (tester) async {
+  testWidgets('venice waits for space before clearing a word', (tester) async {
     await tester.pumpWidget(const RetroHangulTypingApp());
 
     await tester.tap(find.widgetWithText(InkWell, '베네치아'));
@@ -51,8 +51,14 @@ void main() {
     await tester.enterText(find.byType(TextField), '학교');
     await tester.pump();
 
+    var input = tester.widget<TextField>(find.byType(TextField));
+    expect(input.controller?.text, '학교');
+
+    await tester.enterText(find.byType(TextField), '학교 ');
+    await tester.pump();
+
     expect(find.text('연습 완료'), findsNothing);
-    final input = tester.widget<TextField>(find.byType(TextField));
+    input = tester.widget<TextField>(find.byType(TextField));
     expect(input.controller?.text, isEmpty);
   });
 }

@@ -512,9 +512,17 @@ class _PracticeScreenState extends State<PracticeScreen> {
       return;
     }
     _ensureStarted();
-    _recordNewMistakes();
-    final input = _controller.text;
-    if (input == _target) {
+    final input = _committedInput;
+    final veniceConfirmed =
+        widget.mode == PracticeMode.defense && input.endsWith(' ');
+    final judgedInput = widget.mode == PracticeMode.defense
+        ? input.trimRight()
+        : input;
+    _recordNewMistakes(judgedInput);
+    final matched = widget.mode == PracticeMode.defense
+        ? veniceConfirmed && judgedInput == _target
+        : judgedInput == _target;
+    if (matched) {
       final earnedScore = _scoreForCurrentTarget();
       _completedChars += _target.length;
       _completedStrokes += _typingStrokeCount(_target);
@@ -640,8 +648,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
     return _towerBlocks <= 0;
   }
 
-  void _recordNewMistakes() {
-    final input = _committedInput;
+  void _recordNewMistakes(String input) {
     if (input.length > _lastCommittedInput.length) {
       for (var i = _lastCommittedInput.length; i < input.length; i += 1) {
         if (i >= _target.length || input[i] != _target[i]) {
@@ -1249,7 +1256,9 @@ class InputDock extends StatelessWidget {
             decoration: InputDecoration(
               filled: true,
               fillColor: AppColors.ink,
-              hintText: '여기에 입력',
+              hintText: mode == PracticeMode.defense
+                  ? '단어 입력 후 스페이스'
+                  : '여기에 입력',
               hintStyle: RetroText.input.copyWith(color: AppColors.muted),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -1583,18 +1592,6 @@ class WordRainPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: '한 메 타 자 교 사',
-        style: RetroText.mini.copyWith(color: Colors.white),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: size.width);
-    titlePainter.paint(
-      canvas,
-      Offset((size.width - titlePainter.width) / 2, 8),
-    );
-
     final safeWidth = math.max(1.0, size.width - 132);
     if (!sweepActive) {
       for (var i = 1; i < 6; i += 1) {
@@ -1616,7 +1613,9 @@ class WordRainPainter extends CustomPainter {
     }
 
     final activeLeft = 20.0 + ((index * 89) % safeWidth.toInt()).toDouble();
-    final activeY = 48 + progress * (size.height - 150);
+    final activeWidth = _wordWidth(activeWord, active: true);
+    final activeImpactY = _impactYForWord(size, activeLeft, activeWidth);
+    final activeY = 44 + progress * (activeImpactY - 44);
     _paintWordChip(
       canvas: canvas,
       word: activeWord,
@@ -1663,49 +1662,59 @@ class WordRainPainter extends CustomPainter {
         text: word,
         style: (active ? RetroText.section : RetroText.radar).copyWith(
           color: active
-              ? (bonus ? AppColors.text : Colors.white)
-              : AppColors.text.withValues(alpha: 0.78),
+              ? (bonus ? const Color(0xFFFFE66D) : Colors.white)
+              : color,
           fontSize: active ? 30 : 18,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth);
 
-    final width = textPainter.width + (active ? 30 : 24);
-    final height = textPainter.height + (active ? 16 : 12);
-    final rect = Rect.fromLTWH(
-      offset.dx.clamp(8, math.max(8, maxWidth - width + 20)),
-      offset.dy,
-      width,
-      height,
-    );
-    final chip = RRect.fromRectAndRadius(rect, const Radius.circular(8));
-
-    if (active) {
-      canvas.drawShadow(Path()..addRRect(chip), color, 8, false);
-    }
-    canvas.drawRRect(
-      chip,
-      Paint()
-        ..color = active
-            ? (bonus ? const Color(0xFFFFE66D) : color)
-            : Colors.white.withValues(alpha: 0.22)
-        ..style = PaintingStyle.fill,
-    );
-    canvas.drawRRect(
-      chip,
-      Paint()
-        ..color = active ? (bonus ? AppColors.amber : Colors.white) : color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = active ? 2.4 : 1.6,
-    );
-    textPainter.paint(
-      canvas,
-      Offset(
-        rect.left + (rect.width - textPainter.width) / 2,
-        rect.top + (rect.height - textPainter.height) / 2,
+    final dx = offset.dx
+        .clamp(8, math.max(8, maxWidth - textPainter.width))
+        .toDouble();
+    final shadowPainter = TextPainter(
+      text: TextSpan(
+        text: word,
+        style: (active ? RetroText.section : RetroText.radar).copyWith(
+          color: Colors.black.withValues(alpha: active ? 0.55 : 0.18),
+          fontSize: active ? 30 : 18,
+        ),
       ),
-    );
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+    shadowPainter.paint(canvas, Offset(dx + 2, offset.dy + 2));
+    textPainter.paint(canvas, Offset(dx, offset.dy));
+  }
+
+  double _wordWidth(String word, {required bool active}) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: word,
+        style: (active ? RetroText.section : RetroText.radar).copyWith(
+          fontSize: active ? 30 : 18,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return textPainter.width;
+  }
+
+  double _impactYForWord(Size size, double left, double width) {
+    const columns = 3;
+    const rows = 4;
+    final blockSize = math.min(26.0, size.width / 24);
+    final towerWidth = columns * blockSize;
+    final towerHeight = rows * blockSize;
+    final towerLeft = (size.width - towerWidth) / 2;
+    final towerRight = towerLeft + towerWidth;
+    final towerTop = size.height - towerHeight - 43;
+    final wordRight = left + width;
+    final hitsTower = wordRight >= towerLeft - 18 && left <= towerRight + 18;
+    if (hitsTower && towerBlocks > 0) {
+      return towerTop - 44;
+    }
+    return size.height - 78;
   }
 
   void _paintTower(Canvas canvas, Size size) {
