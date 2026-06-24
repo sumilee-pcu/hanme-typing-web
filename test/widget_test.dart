@@ -11,7 +11,7 @@ void main() {
     expect(find.text('자리 연습'), findsOneWidget);
     expect(find.text('낱말 연습'), findsOneWidget);
     expect(find.text('긴글 연습'), findsOneWidget);
-    expect(find.text('단어 방어'), findsOneWidget);
+    expect(find.text('소나기'), findsOneWidget);
   });
 
   testWidgets('opens a practice screen from a mode card', (tester) async {
@@ -22,5 +22,37 @@ void main() {
 
     expect(find.text('TARGET'), findsOneWidget);
     expect(find.text('여기에 입력'), findsOneWidget);
+  });
+
+  testWidgets('advances immediately after a correct key drill answer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const RetroHangulTypingApp());
+
+    await tester.tap(find.widgetWithText(InkWell, '자리 연습'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 / 12'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '마');
+    await tester.pump();
+
+    expect(find.text('2 / 12'), findsOneWidget);
+    final input = tester.widget<TextField>(find.byType(TextField));
+    expect(input.controller?.text, isEmpty);
+  });
+
+  testWidgets('word rain continues after a correct answer', (tester) async {
+    await tester.pumpWidget(const RetroHangulTypingApp());
+
+    await tester.tap(find.widgetWithText(InkWell, '소나기'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '학교');
+    await tester.pump();
+
+    expect(find.text('연습 완료'), findsNothing);
+    final input = tester.widget<TextField>(find.byType(TextField));
+    expect(input.controller?.text, isEmpty);
   });
 }

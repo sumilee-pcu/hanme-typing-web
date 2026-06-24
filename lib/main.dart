@@ -77,7 +77,7 @@ enum PracticeMode {
       PracticeMode.keys => '자리 연습',
       PracticeMode.words => '낱말 연습',
       PracticeMode.passage => '긴글 연습',
-      PracticeMode.defense => '단어 방어',
+      PracticeMode.defense => '소나기',
     };
   }
 
@@ -95,7 +95,7 @@ enum PracticeMode {
       PracticeMode.keys => '두벌식 기본 리듬을 손끝에 붙입니다.',
       PracticeMode.words => '짧고 선명한 낱말로 속도를 올립니다.',
       PracticeMode.passage => '문장 흐름과 정확도를 함께 다듬습니다.',
-      PracticeMode.defense => '제한 시간 안에 단어를 지워 점수를 쌓습니다.',
+      PracticeMode.defense => '떨어지는 단어를 받아쳐 점수를 쌓습니다.',
     };
   }
 
@@ -492,12 +492,16 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _ensureStarted();
     _recordNewMistakes();
     final input = _controller.text;
-    if (input == _target && !_hasActiveComposition) {
+    if (input == _target) {
+      final earnedScore = _scoreForCurrentTarget();
       _completedChars += _target.length;
       _completedStrokes += _typingStrokeCount(_target);
-      _score += _scoreForCurrentTarget();
-      if (widget.mode == PracticeMode.passage ||
-          _index == _targets.length - 1) {
+      _score += earnedScore;
+      final sequenceComplete =
+          widget.mode != PracticeMode.defense &&
+          (widget.mode == PracticeMode.passage ||
+              _index == _targets.length - 1);
+      if (sequenceComplete) {
         _clearInputSilently();
         _finish();
       } else {
@@ -571,7 +575,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _score = 0;
       _finished = false;
       _lastCommittedInput = '';
-      _controller.clear();
+      _clearInputSilently();
     });
     _focusNode.requestFocus();
   }
@@ -610,8 +614,6 @@ class _PracticeScreenState extends State<PracticeScreen> {
   }
 
   int get _typedChars => _completedChars + _committedInput.length;
-
-  bool get _hasActiveComposition => _hasComposingText(_controller.value);
 
   String get _committedInput {
     final value = _controller.value;
@@ -715,10 +717,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
                         if (widget.mode == PracticeMode.defense)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: DefenseRadar(
+                            child: WordRainStage(
                               accent: widget.mode.accent,
-                              danger: _progress,
-                              word: _target,
+                              progress: _progress,
+                              activeWord: _target,
+                              words: _targets,
+                              index: _index,
                             ),
                           ),
                         InputDock(
@@ -1297,6 +1301,212 @@ class DefenseRadarPainter extends CustomPainter {
   }
 }
 
+class WordRainStage extends StatelessWidget {
+  const WordRainStage({
+    required this.accent,
+    required this.progress,
+    required this.activeWord,
+    required this.words,
+    required this.index,
+    super.key,
+  });
+
+  final Color accent;
+  final double progress;
+  final String activeWord;
+  final List<String> words;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return RetroFrame(
+      padding: const EdgeInsets.all(14),
+      borderColor: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('WORD RAIN', style: RetroText.mini.copyWith(color: accent)),
+              const Spacer(),
+              Text(
+                '방어선',
+                style: RetroText.mini.copyWith(color: AppColors.green),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stageHeight = constraints.maxWidth < 520 ? 230.0 : 280.0;
+              return SizedBox(
+                height: stageHeight,
+                child: CustomPaint(
+                  painter: WordRainPainter(
+                    accent: accent,
+                    progress: progress,
+                    activeWord: activeWord,
+                    words: words,
+                    index: index,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class WordRainPainter extends CustomPainter {
+  const WordRainPainter({
+    required this.accent,
+    required this.progress,
+    required this.activeWord,
+    required this.words,
+    required this.index,
+  });
+
+  final Color accent;
+  final double progress;
+  final String activeWord;
+  final List<String> words;
+  final int index;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final background = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFFE8FAFF), Color(0xFFD5F5FF)],
+      ).createShader(Offset.zero & size);
+    final frame = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(frame, background);
+
+    final gridPaint = Paint()
+      ..color = AppColors.line.withValues(alpha: 0.18)
+      ..strokeWidth = 1;
+    for (var x = 0.0; x <= size.width; x += 34) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+    for (var y = 0.0; y <= size.height; y += 30) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    final safeWidth = math.max(1.0, size.width - 140);
+    for (var i = 0; i < 5; i += 1) {
+      final word = i == 0
+          ? activeWord
+          : words[(index + i * 3).remainder(words.length)];
+      final phase = (progress * 5.6 + index * 0.23 + i * 0.19) % 1.0;
+      final left =
+          18.0 + ((index * 61 + i * 137) % safeWidth.toInt()).toDouble();
+      final y = 18 + phase * (size.height - 86);
+      final isActive = i == 0;
+      _paintWordChip(
+        canvas: canvas,
+        word: word,
+        offset: Offset(left, y),
+        color: isActive ? accent : AppColors.blue,
+        active: isActive,
+        maxWidth: size.width - 28,
+      );
+    }
+
+    final dangerPaint = Paint()
+      ..color = AppColors.green
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(12, size.height - 18),
+      Offset(size.width - 12, size.height - 18),
+      dangerPaint,
+    );
+
+    final baseText = TextPainter(
+      text: TextSpan(
+        text: '입력 전에 바닥에 닿으면 위험!',
+        style: RetroText.mini.copyWith(
+          color: AppColors.green.withValues(alpha: 0.9),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: size.width - 24);
+    baseText.paint(
+      canvas,
+      Offset(size.width - baseText.width - 16, size.height - 43),
+    );
+  }
+
+  void _paintWordChip({
+    required Canvas canvas,
+    required String word,
+    required Offset offset,
+    required Color color,
+    required bool active,
+    required double maxWidth,
+  }) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: word,
+        style: (active ? RetroText.section : RetroText.radar).copyWith(
+          color: active ? Colors.white : color,
+          fontSize: active ? 28 : 19,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+
+    final width = textPainter.width + (active ? 30 : 24);
+    final height = textPainter.height + (active ? 16 : 12);
+    final rect = Rect.fromLTWH(
+      offset.dx.clamp(8, math.max(8, maxWidth - width + 20)),
+      offset.dy,
+      width,
+      height,
+    );
+    final chip = RRect.fromRectAndRadius(rect, const Radius.circular(8));
+
+    if (active) {
+      canvas.drawShadow(Path()..addRRect(chip), color, 8, false);
+    }
+    canvas.drawRRect(
+      chip,
+      Paint()
+        ..color = active ? color : color.withValues(alpha: 0.12)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      chip,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = active ? 2.4 : 1.6,
+    );
+    textPainter.paint(
+      canvas,
+      Offset(
+        rect.left + (rect.width - textPainter.width) / 2,
+        rect.top + (rect.height - textPainter.height) / 2,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant WordRainPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.activeWord != activeWord ||
+        oldDelegate.index != index ||
+        oldDelegate.accent != accent;
+  }
+}
+
 class ResultSheet extends StatelessWidget {
   const ResultSheet({
     required this.mode,
@@ -1594,16 +1804,18 @@ class PracticeLibrary {
         '오늘의 연습은 빠르게 치는 것보다 흔들리지 않는 리듬을 찾는 일에서 시작합니다. 손끝은 천천히 길을 기억하고, 문장은 또렷한 호흡으로 이어집니다.',
       ],
       PracticeMode.defense => const [
-        '방어',
-        '신호',
-        '파도',
-        '초점',
-        '기억',
-        '회로',
-        '정렬',
-        '돌파',
+        '학교',
+        '수업',
+        '바람',
+        '기록',
+        '별똥별',
+        '소나기',
+        '키보드',
+        '연습',
+        '정확도',
         '집중',
         '완료',
+        '도전',
       ],
     };
   }
