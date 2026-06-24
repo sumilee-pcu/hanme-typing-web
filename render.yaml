@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: retro-hangul-typing
+    runtime: static
+    buildCommand: bash scripts/render_build.sh
+    staticPublishPath: build/web
+    previews:
+      generation: automatic
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
